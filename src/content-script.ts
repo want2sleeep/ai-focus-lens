@@ -47,6 +47,17 @@ function analyzeElements(): void {
     viewport: {
       width: window.innerWidth,
       height: window.innerHeight
+    },
+    pageMetadata: {
+      title: document.title,
+      domain: window.location.hostname,
+      userAgent: navigator.userAgent,
+      documentReadyState: document.readyState
+    },
+    scanSettings: {
+      includeHiddenElements: false,
+      minimumContrastRatio: 3.0,
+      focusIndicatorThreshold: 3
     }
   };
   
@@ -117,11 +128,20 @@ function createFocusableElement(element: HTMLElement): FocusableElement | null {
         outlineColor: computedStyle.outlineColor,
         outlineWidth: computedStyle.outlineWidth,
         outlineStyle: computedStyle.outlineStyle,
+        outlineOffset: computedStyle.outlineOffset,
         boxShadow: computedStyle.boxShadow,
         border: computedStyle.border,
         borderColor: computedStyle.borderColor,
         borderWidth: computedStyle.borderWidth,
-        borderStyle: computedStyle.borderStyle
+        borderStyle: computedStyle.borderStyle,
+        borderRadius: computedStyle.borderRadius,
+        backgroundColor: computedStyle.backgroundColor,
+        color: computedStyle.color,
+        opacity: computedStyle.opacity,
+        visibility: computedStyle.visibility,
+        display: computedStyle.display,
+        position: computedStyle.position,
+        zIndex: computedStyle.zIndex
       },
       boundingRect: {
         x: rect.x,
@@ -133,8 +153,18 @@ function createFocusableElement(element: HTMLElement): FocusableElement | null {
         bottom: rect.bottom,
         left: rect.left,
         toJSON: rect.toJSON
-      }
+      },
+      isSequentialFocusElement: isSequentialFocusElement(element),
+      isInViewport: isInViewport(element),
+      ...(element.id && { elementId: element.id }),
+      ...(element.className && { className: element.className })
     };
+    
+    // Add aria-label if it exists and is not null
+    const ariaLabel = element.getAttribute('aria-label');
+    if (ariaLabel) {
+      focusableElement.ariaLabel = ariaLabel;
+    }
     
     // Collect focus state data
     collectFocusStateData(element, focusableElement);
@@ -176,11 +206,20 @@ function getComputedStyleData(element: HTMLElement): ComputedStyleData {
     outlineColor: style.outlineColor,
     outlineWidth: style.outlineWidth,
     outlineStyle: style.outlineStyle,
+    outlineOffset: style.outlineOffset,
     boxShadow: style.boxShadow,
     border: style.border,
     borderColor: style.borderColor,
     borderWidth: style.borderWidth,
-    borderStyle: style.borderStyle
+    borderStyle: style.borderStyle,
+    borderRadius: style.borderRadius,
+    backgroundColor: style.backgroundColor,
+    color: style.color,
+    opacity: style.opacity,
+    visibility: style.visibility,
+    display: style.display,
+    position: style.position,
+    zIndex: style.zIndex
   };
 }
 
@@ -236,6 +275,44 @@ function clearHighlights(): void {
       element.removeAttribute('data-ai-focus-lens-highlight');
     }
   });
+}
+
+function isSequentialFocusElement(element: HTMLElement): boolean {
+  const tagName = element.tagName.toLowerCase();
+  const tabIndex = element.getAttribute('tabindex');
+  
+  // Elements that are naturally focusable
+  const naturallyFocusable = [
+    'a', 'button', 'input', 'select', 'textarea', 'details'
+  ];
+  
+  if (naturallyFocusable.includes(tagName)) {
+    // Check if explicitly removed from tab order
+    return tabIndex !== '-1';
+  }
+  
+  // Elements with positive or zero tabindex
+  if (tabIndex !== null) {
+    const tabIndexNum = parseInt(tabIndex, 10);
+    return !isNaN(tabIndexNum) && tabIndexNum >= 0;
+  }
+  
+  // Contenteditable elements
+  if (element.getAttribute('contenteditable') === 'true') {
+    return tabIndex !== '-1';
+  }
+  
+  return false;
+}
+
+function isInViewport(element: HTMLElement): boolean {
+  const rect = element.getBoundingClientRect();
+  return (
+    rect.top >= 0 &&
+    rect.left >= 0 &&
+    rect.bottom <= (window.innerHeight || document.documentElement.clientHeight) &&
+    rect.right <= (window.innerWidth || document.documentElement.clientWidth)
+  );
 }
 
 // Initialize when script loads

@@ -65,7 +65,10 @@ async function saveConfiguration(): Promise<void> {
     baseUrl: baseUrlInput.value.trim() || 'https://api.openai.com/v1',
     model: modelSelect.value,
     batchSize: 5,
-    cacheEnabled: true
+    cacheEnabled: true,
+    timeout: 30000,
+    maxRetries: 3,
+    retryDelay: 1000
   };
   
   // Validate configuration
@@ -144,8 +147,8 @@ function handleServiceWorkerMessage(message: ServiceWorkerMessage): void {
       break;
       
     case 'SCAN_ERROR':
-      if (message.payload && 'error' in message.payload) {
-        handleScanError(message.payload.error);
+      if (message.payload && typeof message.payload === 'object' && 'message' in message.payload) {
+        handleScanError(String(message.payload.message));
       }
       break;
   }
