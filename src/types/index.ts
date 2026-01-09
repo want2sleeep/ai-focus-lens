@@ -191,6 +191,7 @@ export interface ScanProgress {
   estimatedTimeRemaining?: number; // milliseconds
   startTime?: number;
   errors?: string[];
+  metrics?: PerformanceMetrics; // Added for batch processing metrics
 }
 
 /**

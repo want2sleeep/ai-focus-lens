@@ -26,6 +26,8 @@ import {
 import { ErrorHandler, createErrorHandler, CircuitBreaker, createCircuitBreaker } from './utils/error-handler';
 import { StorageManager, createStorageManager } from './utils/storage-manager';
 import { CacheManager, createCacheManager, CacheUtils } from './utils/cache-manager';
+import { BatchProcessor, createBatchProcessor, BatchUtils } from './utils/batch-processor';
+import { DataFilter, createDataFilter, DataFilterUtils } from './utils/data-filter';
 
 console.log('AI Focus Lens Service Worker initialized');
 
@@ -35,6 +37,8 @@ let errorHandler: ErrorHandler | null = null;
 let circuitBreaker: CircuitBreaker | null = null;
 let storageManager: StorageManager | null = null;
 let cacheManager: CacheManager | null = null;
+let batchProcessor: BatchProcessor | null = null;
+let dataFilter: DataFilter | null = null;
 let currentScanId: string | null = null;
 let scanProgress: ScanProgress | null = null;
 
@@ -104,6 +108,11 @@ async function initializeServices(): Promise<void> {
     llmClient = createLLMClient(config);
     errorHandler = createErrorHandler(config);
     circuitBreaker = createCircuitBreaker();
+    batchProcessor = createBatchProcessor(llmClient, errorHandler, config);
+    
+    // Initialize data filter with domain-specific configuration
+    const filterConfig = DataFilterUtils.getRecommendedConfig('default');
+    dataFilter = createDataFilter(filterConfig);
     
     console.log('Services initialized successfully');
   } catch (error) {
@@ -185,9 +194,11 @@ async function handleStartScan(
 /**
  * Handle analyzed elements from content script
  * Requirements: 需求 2.1, 2.2, 2.3 - 处理元素数据并调用 LLM API
+ * Requirements: 需求 6.1 - 按配置的批次大小分组处理元素，实现并发控制和速率限制
+ * Requirements: 需求 7.2, 7.3 - 过滤敏感信息和用户输入，确保只发送必要的样式信息
  */
 async function handleElementsAnalyzed(data: ElementAnalysisData, tabId?: number): Promise<void> {
-  if (!llmClient || !errorHandler || !currentScanId || !storageManager || !cacheManager) {
+  if (!llmClient || !errorHandler || !currentScanId || !storageManager || !cacheManager || !batchProcessor || !dataFilter) {
     console.error('Services not initialized or no active scan');
     return;
   }
@@ -198,18 +209,47 @@ async function handleElementsAnalyzed(data: ElementAnalysisData, tabId?: number)
     // Get configuration
     const config: ExtensionConfig = await storageManager.loadConfig();
     
+    // Apply data filtering and privacy protection
+    // Requirements: 需求 7.2, 7.3 - 过滤敏感信息和用户输入
+    console.log('Applying data filtering and privacy protection...');
+    
+    // Update data filter configuration based on the current domain
+    const domain = new URL(data.pageUrl).hostname;
+    const domainFilterConfig = DataFilterUtils.getRecommendedConfig(domain);
+    dataFilter.updateConfig(domainFilterConfig);
+    
+    // Filter the data
+    const filteredData = dataFilter.filterElementAnalysisData(data);
+    
+    // Validate filtered data
+    const validation = dataFilter.validateFilteredData(filteredData);
+    if (!validation.isValid) {
+      console.warn('Data filtering validation issues:', validation.issues);
+      // Continue with filtered data but log issues
+    }
+    
+    // Log filtering statistics
+    const filterStats = dataFilter.getFilteringStats(data, filteredData);
+    console.log('Data filtering stats:', {
+      originalSize: `${Math.round(filterStats.originalSize / 1024)}KB`,
+      filteredSize: `${Math.round(filterStats.filteredSize / 1024)}KB`,
+      compressionRatio: `${Math.round(filterStats.compressionRatio * 100)}%`,
+      elementsFiltered: filterStats.elementsFiltered,
+      sensitiveDataRemoved: filterStats.sensitiveDataRemoved
+    });
+    
     // Check if caching is enabled and results are cached
     if (CacheUtils.isCachingEnabled(config)) {
-      const cachedResults = await cacheManager.getCachedResults(data, config);
+      const cachedResults = await cacheManager.getCachedResults(filteredData, config);
       if (cachedResults) {
-        console.log(`Using cached results for ${data.pageUrl} (${cachedResults.length} results)`);
-        await completeScan(cachedResults, data, tabId);
+        console.log(`Using cached results for ${filteredData.pageUrl} (${cachedResults.length} results)`);
+        await completeScan(cachedResults, filteredData, tabId);
         return;
       }
     }
     
     // Filter applicable elements
-    const applicableElements = data.elements.filter(isElementApplicable);
+    const applicableElements = filteredData.elements.filter(isElementApplicable);
     
     // Update scan progress
     if (scanProgress) {
@@ -221,52 +261,35 @@ async function handleElementsAnalyzed(data: ElementAnalysisData, tabId?: number)
       });
     }
 
-    // Get configuration for batch processing
-    const batchSize = config.batchSize || 5;
+    // Use BatchProcessor for optimized processing with concurrency control and rate limiting
+    console.log(`Processing ${applicableElements.length} applicable elements using BatchProcessor`);
     
-    // Process elements in batches
-    const results: AnalysisResult[] = [];
+    const batchResult = await batchProcessor.processElements(applicableElements, filteredData, config);
     
-    for (let i = 0; i < applicableElements.length; i += batchSize) {
-      const batch = applicableElements.slice(i, i + batchSize);
+    // Update scan progress with final results
+    if (scanProgress) {
+      scanProgress.completed = batchResult.results.length;
+      scanProgress.failed = batchResult.errors.length;
       
-      try {
-        const batchResults = await processBatch(batch, data, config);
-        results.push(...batchResults);
-        
-        // Update progress
-        if (scanProgress) {
-          scanProgress.completed += batchResults.length;
-          scanProgress.currentElement = batch[batch.length - 1]?.selector || '';
-          notifyPopup({
-            type: 'SCAN_PROGRESS',
-            payload: scanProgress
-          });
-        }
-        
-      } catch (error) {
-        const handledError = errorHandler.handleError(error, {
-          component: 'service-worker',
-          action: 'process-batch',
-          elementSelector: batch.map(e => e.selector).join(', ')
-        });
-        
-        console.error('Batch processing failed:', handledError);
-        
-        // Update failed count
-        if (scanProgress) {
-          scanProgress.failed += batch.length;
-        }
+      // Update with processing metrics
+      if (batchResult.metrics) {
+        scanProgress.metrics = batchResult.metrics;
       }
       
-      // Small delay between batches to avoid overwhelming the API
-      if (i + batchSize < applicableElements.length) {
-        await new Promise(resolve => setTimeout(resolve, 500));
-      }
+      notifyPopup({
+        type: 'SCAN_PROGRESS',
+        payload: scanProgress
+      });
     }
 
-    // Complete scan
-    await completeScan(results, data, tabId);
+    // Log processing metrics
+    console.log('Batch processing metrics:', batchResult.metrics);
+    if (batchResult.errors.length > 0) {
+      console.warn(`Processing completed with ${batchResult.errors.length} errors:`, batchResult.errors);
+    }
+
+    // Complete scan with results (using original data for report context)
+    await completeScan(batchResult.results, data, tabId);
     
   } catch (error) {
     const handledError = errorHandler.handleError(error, {
@@ -286,81 +309,6 @@ async function handleElementsAnalyzed(data: ElementAnalysisData, tabId?: number)
     currentScanId = null;
     scanProgress = null;
   }
-}
-
-/**
- * Process a batch of elements through LLM API
- */
-async function processBatch(
-  elements: FocusableElement[], 
-  pageContext: ElementAnalysisData,
-  config: ExtensionConfig
-): Promise<AnalysisResult[]> {
-  if (!llmClient || !errorHandler || !circuitBreaker) {
-    throw new Error('Services not initialized');
-  }
-
-  const results: AnalysisResult[] = [];
-  
-  // Process elements individually for better error handling
-  for (const element of elements) {
-    try {
-      const result = await errorHandler.executeWithRetry(
-        async () => {
-          return await circuitBreaker!.execute(async () => {
-            const { systemPrompt, userPrompt } = createSingleElementPrompt(element, pageContext);
-            const request = buildLLMRequest(systemPrompt, userPrompt, config.model);
-            
-            const startTime = Date.now();
-            const response = await llmClient!.sendRequest(request);
-            const processingTime = Date.now() - startTime;
-            
-            const focusResult = llmClient!.parseFocusVisibilityResult(response);
-            
-            return {
-              elementSelector: element.selector,
-              result: focusResult,
-              timestamp: Date.now(),
-              processingTime,
-              apiCallId: response.id
-            } as AnalysisResult;
-          });
-        },
-        {
-          operationName: 'analyze-element',
-          component: 'service-worker',
-          elementSelector: element.selector,
-          apiEndpoint: config.baseUrl
-        }
-      );
-      
-      results.push(result);
-      
-    } catch (error) {
-      // Create fallback result for failed elements
-      const fallbackResult: AnalysisResult = {
-        elementSelector: element.selector,
-        result: {
-          status: 'CANTELL',
-          reason: 'Analysis failed due to API error',
-          suggestion: 'Please try again or review manually',
-          confidence: 0,
-          actRuleCompliance: {
-            ruleId: 'oj04fd',
-            outcome: 'cantell',
-            details: 'API call failed'
-          }
-        },
-        timestamp: Date.now(),
-        processingTime: 0,
-        retryCount: config.maxRetries
-      };
-      
-      results.push(fallbackResult);
-    }
-  }
-  
-  return results;
 }
 
 /**
@@ -515,6 +463,15 @@ async function handleSaveConfig(
     }
     if (errorHandler) {
       errorHandler = createErrorHandler(config);
+    }
+    if (batchProcessor && llmClient && errorHandler) {
+      // Recreate batch processor with new configuration
+      batchProcessor = createBatchProcessor(llmClient, errorHandler, config);
+    }
+    if (dataFilter) {
+      // Update data filter configuration
+      const filterConfig = DataFilterUtils.getRecommendedConfig('default');
+      dataFilter.updateConfig(filterConfig);
     }
     
     sendResponse({ success: true });

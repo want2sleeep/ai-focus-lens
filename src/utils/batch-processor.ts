@@ -12,8 +12,8 @@ import {
   PerformanceMetrics
 } from '../types';
 
-import { LLMClient } from '../api/llm-client';
-import { createSingleElementPrompt, buildLLMRequest } from '../prompts/act-rule-oj04fd';
+import { LLMClient, buildLLMRequest } from '../api/llm-client';
+import { createSingleElementPrompt } from '../prompts/act-rule-oj04fd';
 import { ErrorHandler } from './error-handler';
 
 /**
@@ -82,7 +82,18 @@ export interface BatchProcessingResult {
 export class BatchProcessor {
   private rateLimiter: RateLimiter;
   private config: BatchConfig;
-  private metrics: PerformanceMetrics;
+  private metrics: PerformanceMetrics = {
+    scanStartTime: 0,
+    scanEndTime: 0,
+    totalDuration: 0,
+    elementAnalysisTime: 0,
+    apiCallTime: 0,
+    cacheHits: 0,
+    cacheMisses: 0,
+    apiCalls: 0,
+    failedApiCalls: 0,
+    retryCount: 0
+  };
 
   constructor(
     private llmClient: LLMClient,
