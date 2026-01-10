@@ -209,20 +209,18 @@
       <input type="text" id="baseUrl" placeholder="https://api.openai.com/v1">
     </div>
     <div class="form-group">
-      <label for="model">模型</label>
-      <select id="model">
-        <option value="gpt-3.5-turbo">GPT-3.5 Turbo</option>
-        <option value="gpt-4">GPT-4</option>
-        <option value="gpt-4-turbo">GPT-4 Turbo</option>
-      </select>
+      <label for="model">模型名称</label>
+      <input type="text" id="model" placeholder="例如: gpt-4, glm-4.6">
     </div>
     <button id="saveConfig" class="btn btn-primary btn-block">保存配置</button>
+    <button id="clearCache" class="btn btn-block" style="background-color: #6c757d; color: white; margin-top: 10px;">清除本地缓存</button>
     <div id="configStatus"></div>
   </div>
   
   <div class="section">
     <h3>扫描控制</h3>
     <button id="startScan" class="btn btn-primary btn-block">开始扫描</button>
+    <button id="stopScan" class="btn btn-primary btn-block hidden" style="background-color: #dc3545;">停止扫描</button>
     <div id="scanProgress" class="hidden">
       <div class="progress">
         <div id="progressBar" class="progress-bar" style="width: 0%"></div>

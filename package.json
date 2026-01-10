@@ -5,15 +5,25 @@
   "main": "dist/service-worker.js",
   "scripts": {
     "dev": "webpack --mode development --watch",
+    "dev:build": "node scripts/dev-build.js",
     "build": "webpack --mode production",
     "build:dev": "webpack --mode development",
-    "clean": "rimraf dist",
+    "build:prod": "webpack --mode production --config webpack.config.js",
+    "build:extension": "node scripts/build-extension.js",
+    "clean": "rimraf dist packages",
     "type-check": "tsc --noEmit",
+    "type-check:prod": "tsc --noEmit --project tsconfig.prod.json",
     "lint": "eslint src --ext .ts,.tsx",
     "lint:fix": "eslint src --ext .ts,.tsx --fix",
     "test": "jest",
     "test:watch": "jest --watch",
-    "package": "pnpm run build && web-ext build --source-dir=dist"
+    "test:coverage": "jest --coverage",
+    "package": "pnpm run build:extension",
+    "package:dev": "pnpm run build:dev && web-ext build --source-dir=dist --artifacts-dir=packages --filename=ai-focus-lens-dev.zip --overwrite-dest",
+    "validate": "pnpm run type-check:prod && pnpm run lint && pnpm run test",
+    "prebuild": "pnpm run validate",
+    "prepackage": "pnpm run validate",
+    "start": "pnpm run dev:build"
   },
   "keywords": [
     "accessibility",

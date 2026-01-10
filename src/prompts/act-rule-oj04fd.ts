@@ -50,14 +50,16 @@ The color difference must be perceptible (minimum threshold: ${this.COLOR_DIFFER
 3. **Box Shadow**: Addition or changes in box shadow
 4. **Background**: Changes in background color
 5. **Text Color**: Changes in text color
-6. **Other Visual Changes**: Any other visual modifications that indicate focus
+6. **External Indicators**: Visual changes in nearby elements or pseudo-elements (e.g., ::before/::after, sibling indicators)
+7. **Other Visual Changes**: Any other visual modifications that indicate focus
 
 ### Analysis Process
 1. Compare the focused and unfocused styles of the element
-2. Calculate HSL color differences for all visual properties
-3. Determine if any difference meets the minimum threshold
-4. Consider the visibility and prominence of the focus indicator
-5. Evaluate if the indicator is sufficient for users to identify the focused element
+2. Check for visual changes in the element's vicinity (external indicators) if provided in context
+3. Calculate HSL color differences for all visual properties
+4. Determine if any difference meets the minimum threshold
+5. Consider the visibility and prominence of the focus indicator
+6. Evaluate if the indicator is sufficient for users to identify the focused element
 
 ### Response Format
 You must respond with a JSON object containing:
@@ -92,10 +94,11 @@ Be thorough in your analysis and provide actionable suggestions for failed eleme
    * Build user prompt with element data
    * Requirements: 需求 2.1 - 实现元素数据到 Prompt 的转换逻辑
    */
-  static buildUserPrompt(element: FocusableElement, pageContext?: ElementAnalysisData): string {
+  static buildUserPrompt(element: FocusableElement, pageContext?: ElementAnalysisData, externalIndicators?: string): string {
     const elementInfo = this.formatElementInfo(element);
     const styleComparison = this.formatStyleComparison(element);
     const contextInfo = pageContext ? this.formatPageContext(pageContext) : '';
+    const externalInfo = externalIndicators ? `\n## External Focus Indicators\n${externalIndicators}\n` : '';
 
     return `Please analyze the following element for WCAG 2.4.7 Focus Visible compliance according to ACT Rule oj04fd:
 
@@ -104,7 +107,7 @@ ${elementInfo}
 
 ## Style Comparison
 ${styleComparison}
-
+${externalInfo}
 ${contextInfo}
 
 ## Analysis Request
@@ -121,14 +124,18 @@ Provide your analysis in the specified JSON format with detailed reasoning and a
   /**
    * Build batch prompt for multiple elements
    */
-  static buildBatchPrompt(elements: FocusableElement[], pageContext?: ElementAnalysisData): string {
+  static buildBatchPrompt(elements: FocusableElement[], pageContext?: ElementAnalysisData, externalIndicatorsMap?: Record<string, string>): string {
     const contextInfo = pageContext ? this.formatPageContext(pageContext) : '';
-    const elementsInfo = elements.map((element, index) => 
-      `### Element ${index + 1}
+    const elementsInfo = elements.map((element, index) => {
+      const externalInfo = externalIndicatorsMap && externalIndicatorsMap[element.selector] 
+        ? `\n**External Indicators**: ${externalIndicatorsMap[element.selector]}` 
+        : '';
+      
+      return `### Element ${index + 1}
 ${this.formatElementInfo(element)}
 
-${this.formatStyleComparison(element)}`
-    ).join('\n\n');
+${this.formatStyleComparison(element)}${externalInfo}`;
+    }).join('\n\n');
 
     return `Please analyze the following ${elements.length} elements for WCAG 2.4.7 Focus Visible compliance according to ACT Rule oj04fd:
 
@@ -138,7 +145,7 @@ ${contextInfo}
 ${elementsInfo}
 
 ## Analysis Request
-For each element, analyze whether it has a visible focus indicator that meets the ACT Rule oj04fd requirements.
+For each element, analyze whether it has a visible focus indicator that meets the ACT Rule oj04fd requirements. Consider both internal style changes and any external indicators provided.
 
 Respond with a JSON array containing analysis results for each element in order:
 [
@@ -167,20 +174,28 @@ Respond with a JSON array containing analysis results for each element in order:
    * Format element information for prompt
    */
   private static formatElementInfo(element: FocusableElement): string {
-    return `**Element**: ${element.tagName.toLowerCase()}
-**Selector**: ${element.selector}
-**Tab Index**: ${element.tabIndex}
-**Sequential Focus Element**: ${element.isSequentialFocusElement ? 'Yes' : 'No'}
-**In Viewport**: ${element.isInViewport ? 'Yes' : 'No'}
-**Element ID**: ${element.elementId || 'None'}
-**CSS Classes**: ${element.className || 'None'}
-**ARIA Label**: ${element.ariaLabel || 'None'}
-**Bounding Rectangle**: ${JSON.stringify({
-      x: Math.round(element.boundingRect.x),
-      y: Math.round(element.boundingRect.y),
-      width: Math.round(element.boundingRect.width),
-      height: Math.round(element.boundingRect.height)
-    })}`;
+    const info = [
+      `**Element**: ${element.tagName.toLowerCase()}`,
+      `**Selector**: ${element.selector}`,
+      `**Tab Index**: ${element.tabIndex}`,
+      `**Sequential Focus Element**: ${element.isSequentialFocusElement ? 'Yes' : 'No'}`,
+      `**In Viewport**: ${element.isInViewport ? 'Yes' : 'No'}`,
+      `**Element ID**: ${element.elementId || 'None'}`,
+      `**CSS Classes**: ${element.className || 'None'}`,
+      `**ARIA Label**: ${element.ariaLabel || 'None'}`,
+      `**Bounding Rectangle**: ${JSON.stringify({
+        x: Math.round(element.boundingRect.x),
+        y: Math.round(element.boundingRect.y),
+        width: Math.round(element.boundingRect.width),
+        height: Math.round(element.boundingRect.height)
+      })}`
+    ];
+
+    if (element.externalIndicators && element.externalIndicators.length > 0) {
+      info.push(`**External Focus Indicators Detected**: \n- ${element.externalIndicators.join('\n- ')}`);
+    }
+
+    return info.join('\n');
   }
 
   /**
@@ -421,26 +436,48 @@ Respond with a JSON array containing analysis results for each element in order:
 /**
  * Create a focused analysis prompt for a single element
  */
-export function createSingleElementPrompt(element: FocusableElement, pageContext?: ElementAnalysisData): {
+export function createSingleElementPrompt(
+  element: FocusableElement, 
+  pageContext?: ElementAnalysisData,
+  externalIndicators?: string
+): {
   systemPrompt: string;
   userPrompt: string;
 } {
+  // Use provided externalIndicators or extract from element if available
+  const indicators = externalIndicators || 
+    (element.externalIndicators && element.externalIndicators.length > 0 
+      ? element.externalIndicators.join('\n') 
+      : undefined);
+
   return {
     systemPrompt: ACTRulePromptBuilder.buildSystemPrompt(),
-    userPrompt: ACTRulePromptBuilder.buildUserPrompt(element, pageContext)
+    userPrompt: ACTRulePromptBuilder.buildUserPrompt(element, pageContext, indicators)
   };
 }
 
 /**
  * Create a batch analysis prompt for multiple elements
  */
-export function createBatchPrompt(elements: FocusableElement[], pageContext?: ElementAnalysisData): {
+export function createBatchPrompt(
+  elements: FocusableElement[], 
+  pageContext?: ElementAnalysisData,
+  externalIndicatorsMap?: Record<string, string>
+): {
   systemPrompt: string;
   userPrompt: string;
 } {
+  // Merge provided map with indicators from elements
+  const indicatorsMap = { ...externalIndicatorsMap };
+  elements.forEach(el => {
+    if (el.externalIndicators && el.externalIndicators.length > 0) {
+      indicatorsMap[el.selector] = el.externalIndicators.join('\n');
+    }
+  });
+
   return {
     systemPrompt: ACTRulePromptBuilder.buildSystemPrompt(),
-    userPrompt: ACTRulePromptBuilder.buildBatchPrompt(elements, pageContext)
+    userPrompt: ACTRulePromptBuilder.buildBatchPrompt(elements, pageContext, indicatorsMap)
   };
 }
 

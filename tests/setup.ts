@@ -6,11 +6,18 @@ const mockChrome = {
     onInstalled: {
       addListener: jest.fn()
     },
+    onStartup: {
+      addListener: jest.fn()
+    },
+    onSuspend: {
+      addListener: jest.fn()
+    },
     onMessage: {
       addListener: jest.fn()
     },
     sendMessage: jest.fn(),
-    getURL: jest.fn((path: string) => `chrome-extension://test/${path}`)
+    getURL: jest.fn((path: string) => `chrome-extension://test/${path}`),
+    getManifest: jest.fn(() => ({ version: '1.0.0' }))
   },
   storage: {
     sync: {
@@ -19,12 +26,19 @@ const mockChrome = {
     },
     local: {
       get: jest.fn(),
-      set: jest.fn()
+      set: jest.fn(),
+      remove: jest.fn()
     }
   },
   tabs: {
     query: jest.fn(),
-    sendMessage: jest.fn()
+    sendMessage: jest.fn(),
+    onRemoved: {
+      addListener: jest.fn()
+    },
+    onUpdated: {
+      addListener: jest.fn()
+    }
   },
   scripting: {
     executeScript: jest.fn()
@@ -45,7 +59,10 @@ Object.defineProperty(window, 'getComputedStyle', {
     border: '0px none rgb(0, 0, 0)',
     borderColor: 'rgb(0, 0, 0)',
     borderWidth: '0px',
-    borderStyle: 'none'
+    borderStyle: 'none',
+    visibility: 'visible',
+    display: 'block',
+    opacity: '1'
   })
 });
 

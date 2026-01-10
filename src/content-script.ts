@@ -16,7 +16,11 @@ function initializeContentScript(): void {
   
   // Listen for messages from popup/service worker
   chrome.runtime.onMessage.addListener((message: ContentScriptMessage, _sender, _sendResponse) => {
+    console.log('Content Script received message:', message.type);
     switch (message.type) {
+      case 'START_ANALYSIS':
+        analyzeElements();
+        break;
       case 'HIGHLIGHT_ELEMENT':
         if (message.payload && 'selector' in message.payload) {
           highlightElement(message.payload.selector);
@@ -29,19 +33,37 @@ function initializeContentScript(): void {
   });
   
   // Start element analysis when page is ready
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', analyzeElements);
-  } else {
-    analyzeElements();
-  }
+  // REMOVED: No longer automatic to prevent duplicate triggers
 }
 
-function analyzeElements(): void {
+async function analyzeElements(): Promise<void> {
   console.log('Starting element analysis');
   
-  const focusableElements = identifyFocusableElements();
+  const focusableSelectors = [
+    'a[href]',
+    'button',
+    'input:not([disabled])',
+    'select:not([disabled])',
+    'textarea:not([disabled])',
+    '[tabindex]:not([tabindex="-1"])',
+    '[contenteditable="true"]'
+  ];
+  
+  const elements: FocusableElement[] = [];
+  const rawElements = Array.from(document.querySelectorAll(focusableSelectors.join(',')));
+  
+  // Process elements sequentially to allow focus/blur logic to work reliably
+  for (const element of rawElements) {
+    if (element instanceof HTMLElement && isElementVisible(element)) {
+      const focusableElement = await createFocusableElement(element);
+      if (focusableElement) {
+        elements.push(focusableElement);
+      }
+    }
+  }
+
   const analysisData: ElementAnalysisData = {
-    elements: focusableElements,
+    elements: elements,
     pageUrl: window.location.href,
     timestamp: Date.now(),
     viewport: {
@@ -67,35 +89,7 @@ function analyzeElements(): void {
     payload: analysisData
   } as ContentScriptMessage);
   
-  console.log(`Analyzed ${focusableElements.length} focusable elements`);
-}
-
-function identifyFocusableElements(): FocusableElement[] {
-  const focusableSelectors = [
-    'a[href]',
-    'button',
-    'input:not([disabled])',
-    'select:not([disabled])',
-    'textarea:not([disabled])',
-    '[tabindex]:not([tabindex="-1"])',
-    '[contenteditable="true"]'
-  ];
-  
-  const elements: FocusableElement[] = [];
-  
-  focusableSelectors.forEach(selector => {
-    const nodeList = document.querySelectorAll(selector);
-    nodeList.forEach((element: Element) => {
-      if (element instanceof HTMLElement && isElementVisible(element)) {
-        const focusableElement = createFocusableElement(element);
-        if (focusableElement) {
-          elements.push(focusableElement);
-        }
-      }
-    });
-  });
-  
-  return elements;
+  console.log(`Analyzed ${elements.length} focusable elements`);
 }
 
 function isElementVisible(element: HTMLElement): boolean {
@@ -111,7 +105,7 @@ function isElementVisible(element: HTMLElement): boolean {
   );
 }
 
-function createFocusableElement(element: HTMLElement): FocusableElement | null {
+async function createFocusableElement(element: HTMLElement): Promise<FocusableElement | null> {
   try {
     const computedStyle = window.getComputedStyle(element);
     const rect = element.getBoundingClientRect();
@@ -151,8 +145,7 @@ function createFocusableElement(element: HTMLElement): FocusableElement | null {
         top: rect.top,
         right: rect.right,
         bottom: rect.bottom,
-        left: rect.left,
-        toJSON: rect.toJSON
+        left: rect.left
       },
       isSequentialFocusElement: isSequentialFocusElement(element),
       isInViewport: isInViewport(element),
@@ -166,8 +159,8 @@ function createFocusableElement(element: HTMLElement): FocusableElement | null {
       focusableElement.ariaLabel = ariaLabel;
     }
     
-    // Collect focus state data
-    collectFocusStateData(element, focusableElement);
+    // Collect focus state data (including sibling changes)
+    await collectFocusStateData(element, focusableElement);
     
     return focusableElement;
   } catch (error) {
@@ -176,27 +169,107 @@ function createFocusableElement(element: HTMLElement): FocusableElement | null {
   }
 }
 
-function collectFocusStateData(element: HTMLElement, focusableElement: FocusableElement): void {
-  // Store original focused element
+async function collectFocusStateData(element: HTMLElement, focusableElement: FocusableElement): Promise<void> {
   const originalFocused = document.activeElement;
   
   try {
-    // Collect unfocused state
+    console.log(`[AI Focus Lens] Collecting focus state for: ${focusableElement.selector}`);
+    
+    // 1. Snapshot siblings BEFORE focus
+    const siblingsBefore = captureSiblingsState(element);
+
+    // 2. Collect unfocused state
     focusableElement.unfocusedStyle = getComputedStyleData(element);
     
-    // Focus the element and collect focused state
-    element.focus();
+    // 3. Focus the element and trigger events
+    element.focus({ preventScroll: true });
+    element.dispatchEvent(new FocusEvent('focus', { bubbles: true }));
+    element.dispatchEvent(new Event('focusin', { bubbles: true }));
+    
+    // 4. WAIT for JavaScript-triggered style changes to render
+    // Increased to 250ms for slower systems/complex handlers
+    await new Promise(resolve => setTimeout(resolve, 250));
+    
+    // 5. Collect focused state
     focusableElement.focusedStyle = getComputedStyleData(element);
     
-    // Restore original focus
-    if (originalFocused instanceof HTMLElement) {
-      originalFocused.focus();
+    // 6. Snapshot siblings AFTER focus
+    const siblingsAfter = captureSiblingsState(element);
+
+    // 7. Compare sibling states to find external indicators
+    const indicators = compareSiblingStates(siblingsBefore, siblingsAfter);
+    focusableElement.externalIndicators = indicators;
+    
+    if (indicators.length > 0) {
+      console.log(`%c[AI Focus Lens] Found ${indicators.length} external indicators for ${focusableElement.selector}:`, 'color: #007bff; font-weight: bold;', indicators);
     } else {
+      console.log(`[AI Focus Lens] No external indicators found for ${focusableElement.selector}`);
+    }
+    
+    // Restore original focus
+    if (originalFocused instanceof HTMLElement && originalFocused !== element) {
+      originalFocused.focus({ preventScroll: true });
+    } else if (document.activeElement === element) {
       element.blur();
     }
   } catch (error) {
     console.error('Error collecting focus state data:', error);
   }
+}
+
+function captureSiblingsState(element: HTMLElement): Map<string, any> {
+  const state = new Map<string, any>();
+  const parent = element.parentElement;
+  
+  if (parent) {
+    Array.from(parent.children).forEach(child => {
+      if (child !== element && child instanceof HTMLElement) {
+        const key = child.id ? `#${child.id}` : generateSelector(child);
+        const style = window.getComputedStyle(child);
+        state.set(key, {
+          backgroundColor: style.backgroundColor,
+          color: style.color,
+          visibility: style.visibility,
+          display: style.display,
+          opacity: style.opacity,
+          outline: style.outline,
+          border: style.border,
+          boxShadow: style.boxShadow,
+          width: style.width,
+          height: style.height
+        });
+      }
+    });
+  }
+  return state;
+}
+
+function compareSiblingStates(before: Map<string, any>, after: Map<string, any>): string[] {
+  const indicators: string[] = [];
+  
+  after.forEach((afterState, key) => {
+    const beforeState = before.get(key);
+    if (!beforeState) return;
+
+    const changes: string[] = [];
+    const propsToCompare = [
+      'backgroundColor', 'color', 'visibility', 'display', 
+      'opacity', 'outline', 'border', 'boxShadow', 'width', 'height'
+    ];
+
+    propsToCompare.forEach(prop => {
+      if (beforeState[prop] !== afterState[prop]) {
+        console.log(`[AI Focus Lens] Sibling ${key} change: ${prop} from "${beforeState[prop]}" to "${afterState[prop]}"`);
+        changes.push(`${prop} changed from "${beforeState[prop]}" to "${afterState[prop]}"`);
+      }
+    });
+
+    if (changes.length > 0) {
+      indicators.push(`Sibling element ${key}: ${changes.join(', ')}`);
+    }
+  });
+
+  return indicators;
 }
 
 function getComputedStyleData(element: HTMLElement): ComputedStyleData {

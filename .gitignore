@@ -6,6 +6,7 @@ pnpm-lock.yaml
 dist/
 build/
 web-ext-artifacts/
+packages/
 
 # TypeScript
 *.tsbuildinfo
@@ -86,6 +87,9 @@ temp/
 *.swo
 *~
 .kiro/
+.gemini/
+openspec/
+AGENTS.md
 
 # OS generated files
 .DS_Store

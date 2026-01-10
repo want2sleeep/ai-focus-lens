@@ -161,6 +161,12 @@ export class DataFilter {
         this.filterSensitiveText(element.ariaLabel) : element.ariaLabel;
     }
 
+    if (element.externalIndicators) {
+      filtered.externalIndicators = element.externalIndicators.map(indicator => 
+        this.config.filterSensitiveText ? this.filterSensitiveText(indicator) : indicator
+      );
+    }
+
     return filtered;
   }
 

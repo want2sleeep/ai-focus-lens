@@ -300,6 +300,53 @@ export class CacheManager {
   }
 
   /**
+   * Clear cache entries for a specific tab
+   * Requirements: 需求 6.4 - 清理所有注入的脚本和事件监听器
+   */
+  public async clearTabCache(tabId: number): Promise<void> {
+    try {
+      // Note: Since we don't store tab-specific cache entries directly,
+      // this method is a placeholder for future tab-specific caching
+      console.log(`Tab-specific cache clearing not implemented for tab ${tabId}`);
+      
+      // For now, we could clear cache entries that are older than a certain threshold
+      // when a tab is closed, as a cleanup measure
+      await this.cleanupExpiredEntries();
+    } catch (error) {
+      console.error('Failed to clear tab cache:', error);
+    }
+  }
+
+  /**
+   * Perform cache maintenance operations
+   * Requirements: 需求 6.4 - 清理资源和维护缓存
+   */
+  public async performMaintenance(): Promise<void> {
+    try {
+      console.log('Performing cache maintenance...');
+      
+      // Clean up expired entries
+      const expiredCleaned = await this.cleanupExpiredEntries();
+      
+      // Update cache statistics
+      const stats = await this.getCacheStats();
+      
+      // Log maintenance results
+      console.log(`Cache maintenance completed: ${expiredCleaned} expired entries removed, ${stats.totalEntries} entries remaining`);
+      
+      // If cache is still too large, perform additional cleanup
+      if (stats.totalEntries > this.MAX_CACHE_ENTRIES * 0.9) {
+        const entriesToRemove = stats.totalEntries - Math.floor(this.MAX_CACHE_ENTRIES * 0.7);
+        await this.cleanupLRUEntries(entriesToRemove);
+        console.log(`Additional cleanup: removed ${entriesToRemove} LRU entries`);
+      }
+      
+    } catch (error) {
+      console.error('Cache maintenance failed:', error);
+    }
+  }
+
+  /**
    * Get cache statistics
    */
   public async getCacheStats(): Promise<{

@@ -1,5 +1,17 @@
 // Core data types for AI Focus Lens extension
 
+export interface SerializableRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  top: number;
+  right: number;
+  bottom: number;
+  left: number;
+  toJSON?: () => any;
+}
+
 /**
  * Represents a focusable element on the webpage with all necessary data for analysis
  * Requirements: 需求 1.2 - 收集元素的 computedStyle、位置信息、outline、box-shadow 和 border 属性
@@ -9,7 +21,7 @@ export interface FocusableElement {
   tagName: string;
   tabIndex: number;
   computedStyle: ComputedStyleData;
-  boundingRect: DOMRect;
+  boundingRect: SerializableRect;
   focusedStyle?: ComputedStyleData;
   unfocusedStyle?: ComputedStyleData;
   // Additional metadata for ACT rule oj04fd compliance
@@ -18,6 +30,8 @@ export interface FocusableElement {
   elementId?: string;
   className?: string;
   ariaLabel?: string;
+  frameId?: string | undefined;
+  externalIndicators?: string[];
 }
 
 /**
@@ -189,6 +203,7 @@ export interface ScanProgress {
   status: 'idle' | 'initializing' | 'scanning' | 'completed' | 'error' | 'cancelled';
   currentElement?: string;
   estimatedTimeRemaining?: number; // milliseconds
+  estimatedTime?: number; // milliseconds
   startTime?: number;
   errors?: string[];
   metrics?: PerformanceMetrics; // Added for batch processing metrics
@@ -217,6 +232,13 @@ export interface ScanReport {
     overallCompliance: number; // percentage
     commonIssues: string[];
     recommendations: string[];
+  };
+  edgeCaseInfo?: {
+    type: 'no-elements' | 'large-page' | 'critical-error' | 'network-issue';
+    message: string;
+    suggestions: string[];
+    fallbackAction?: string;
+    warnings?: string[];
   };
 }
 
@@ -319,18 +341,18 @@ export interface Message {
 }
 
 export interface ContentScriptMessage extends Message {
-  type: 'ELEMENTS_ANALYZED' | 'HIGHLIGHT_ELEMENT' | 'CLEAR_HIGHLIGHTS' | 'FOCUS_ELEMENT' | 'BLUR_ELEMENT';
-  payload?: ElementAnalysisData | { selector: string } | { selector: string; highlight: boolean } | undefined;
+  type: 'ELEMENTS_ANALYZED' | 'HIGHLIGHT_ELEMENT' | 'CLEAR_HIGHLIGHTS' | 'FOCUS_ELEMENT' | 'BLUR_ELEMENT' | 'START_ANALYSIS';
+  payload?: ElementAnalysisData | { selector: string } | { selector: string; highlight: boolean } | { scanId: string } | undefined;
 }
 
 export interface PopupMessage extends Message {
-  type: 'START_SCAN' | 'GET_RESULTS' | 'GET_CONFIG' | 'SAVE_CONFIG' | 'CANCEL_SCAN' | 'CLEAR_CACHE';
+  type: 'START_SCAN' | 'START_AGENT_SCAN' | 'GET_AGENT_STATUS' | 'TEST_FOCUS_TRAPS' | 'GET_RESULTS' | 'GET_CONFIG' | 'SAVE_CONFIG' | 'CANCEL_SCAN' | 'CLEAR_CACHE' | 'TEST_CONNECTION';
   payload?: ExtensionConfig | { scanId?: string } | undefined;
 }
 
 export interface ServiceWorkerMessage extends Message {
-  type: 'SCAN_PROGRESS' | 'SCAN_COMPLETE' | 'SCAN_ERROR' | 'CONFIG_UPDATED' | 'CACHE_CLEARED' | 'API_ERROR';
-  payload?: ScanProgress | ScanReport | ExtensionError | ExtensionConfig | { success: boolean };
+  type: 'SCAN_PROGRESS' | 'SCAN_COMPLETE' | 'SCAN_ERROR' | 'CONFIG_UPDATED' | 'CACHE_CLEARED' | 'API_ERROR' | 'GLOBAL_ERROR_NOTIFICATION' | 'NOTIFICATIONS_UPDATED';
+  payload?: ScanProgress | ScanReport | ExtensionError | ExtensionConfig | { success: boolean } | { error: any; userMessage: string; suggestions: string[] };
 }
 
 /**
@@ -343,13 +365,33 @@ export interface ExtensionError {
   details?: string;
   timestamp: number;
   context?: {
-    component: 'content-script' | 'service-worker' | 'popup' | 'storage-manager' | 'cache-manager';
+    component: 
+      | 'content-script' 
+      | 'service-worker' 
+      | 'popup' 
+      | 'storage-manager' 
+      | 'cache-manager' 
+      | 'prar-loop' 
+      | 'perception-engine' 
+      | 'planning-engine' 
+      | 'reflection-engine' 
+      | 'accessibility-testing-agent'
+      | 'action-engine'
+      | 'cdp-interface'
+      | 'focus-trap-detector';
     action: string;
     elementSelector?: string;
     apiEndpoint?: string;
+    [key: string]: any; // Allow additional context properties
   };
   recoverable: boolean;
   retryable: boolean;
+  edgeCaseInfo?: {
+    type: string;
+    message: string;
+    suggestions: string[];
+    fallbackAction?: string | undefined;
+  };
 }
 
 export type ErrorCode = 

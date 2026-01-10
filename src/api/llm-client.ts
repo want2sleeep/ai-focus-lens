@@ -54,10 +54,13 @@ export class LLMClient {
     
     let lastError: ExtensionError | null = null;
     
+    console.log(`[LLMClient] Sending request to ${request.model} at ${this.config.baseUrl}`);
+    
     for (let attempt = 0; attempt < this.config.maxRetries; attempt++) {
       try {
         const response = await this.makeAPICall(request);
         this.validateResponse(response);
+        console.log(`[LLMClient] Received successful response from ${request.model}`);
         return response;
       } catch (error) {
         lastError = this.handleAPIError(error, attempt + 1);
@@ -142,7 +145,7 @@ export class LLMClient {
   async testConnection(): Promise<{ success: boolean; error?: string }> {
     try {
       const testRequest: LLMRequest = {
-        model: 'gpt-3.5-turbo',
+        model: 'gpt-4', // Default for testing
         messages: [
           {
             role: 'user',
@@ -167,7 +170,12 @@ export class LLMClient {
   private async makeAPICall(request: LLMRequest): Promise<LLMResponse> {
     this.abortController = new AbortController();
     
-    const url = `${this.config.baseUrl}/chat/completions`;
+    // Construct the full URL. If baseUrl already contains /chat/completions, use it as is.
+    let url = this.config.baseUrl;
+    if (!url.toLowerCase().includes('/chat/completions')) {
+      url = `${url}/chat/completions`;
+    }
+    
     const headers = {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${this.config.apiKey}`,
